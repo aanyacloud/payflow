@@ -1,0 +1,30 @@
+﻿# Maven / Java
+**/target/
+*.class
+*.jar
+*.war
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+application-local.properties
+application-local.yml
+# IDE files
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+# Logs
+*.log
+logs/
+# Operating system
+.DS_Store
+Thumbs.db
+desktop.ini
+# Application and test logs
+*.log
+*-log.txt
+run-log.txt
+test-log.txt
