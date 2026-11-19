@@ -1,18 +1,15 @@
 
 package com.payflow.backend.service;
 
+import com.payflow.backend.dto.RefundStatusHistoryResponse;
 import com.payflow.backend.entity.Payment;
 import com.payflow.backend.entity.Refund;
 import com.payflow.backend.entity.RefundStatus;
 import com.payflow.backend.entity.RefundStatusHistory;
-
-import com.payflow.backend.dto.RefundStatusHistoryResponse;
-
-import com.payflow.backend.exception.PaymentNotFoundException;
-import com.payflow.backend.exception.RefundNotFoundException;
 import com.payflow.backend.exception.IdempotencyConflictException;
 import com.payflow.backend.exception.InvalidPaymentStatusTransitionException;
-
+import com.payflow.backend.exception.PaymentNotFoundException;
+import com.payflow.backend.exception.RefundNotFoundException;
 import com.payflow.backend.repository.PaymentRepository;
 import com.payflow.backend.repository.RefundRepository;
 import com.payflow.backend.repository.RefundStatusHistoryRepository;
@@ -43,11 +40,11 @@ public class RefundService {
 
     @Transactional
     public Refund createRefund(
+            UUID userId,
             UUID paymentId,
             BigDecimal amount,
             String idempotencyKey
     ) {
-
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException(
                     "Refund amount must be greater than zero"
@@ -57,26 +54,26 @@ public class RefundService {
         if (idempotencyKey == null
                 || idempotencyKey.isBlank()
                 || idempotencyKey.length() > 100) {
-
             throw new IllegalArgumentException(
                     "Idempotency key must contain 1 to 100 characters"
             );
         }
 
-        var existingRefund =
-                refundRepository.findByIdempotencyKey(idempotencyKey);
+        // Lock only a payment owned by the authenticated user.
+        Payment payment = paymentRepository
+                .findByIdAndUserIdForUpdate(paymentId, userId)
+                .orElseThrow(() -> new PaymentNotFoundException(
+                        "Payment not found: " + paymentId
+                ));
+
+        // Idempotency is scoped to this payment.
+        var existingRefund = refundRepository
+                .findByPayment_IdAndIdempotencyKey(paymentId, idempotencyKey);
 
         if (existingRefund.isPresent()) {
-
             Refund refund = existingRefund.get();
 
-            boolean samePayment =
-                    refund.getPayment().getId().equals(paymentId);
-
-            boolean sameAmount =
-                    refund.getAmount().compareTo(amount) == 0;
-
-            if (!samePayment || !sameAmount) {
+            if (refund.getAmount().compareTo(amount) != 0) {
                 throw new IdempotencyConflictException(
                         "Idempotency key already used with a different refund request"
                 );
@@ -84,13 +81,6 @@ public class RefundService {
 
             return refund;
         }
-
-        // Lock the parent payment to serialize refund operations.
-        Payment payment = paymentRepository
-                .findByIdForUpdate(paymentId)
-                .orElseThrow(() -> new PaymentNotFoundException(
-                        "Payment not found: " + paymentId
-                ));
 
         if (!"SUCCESS".equals(payment.getStatus())) {
             throw new IllegalArgumentException(
@@ -126,9 +116,9 @@ public class RefundService {
     }
 
     @Transactional(readOnly = true)
-    public List<Refund> getRefunds(UUID paymentId) {
+    public List<Refund> getRefunds(UUID userId, UUID paymentId) {
 
-        paymentRepository.findById(paymentId)
+        paymentRepository.findByIdAndUser_Id(paymentId, userId)
                 .orElseThrow(() -> new PaymentNotFoundException(
                         "Payment not found: " + paymentId
                 ));
@@ -139,25 +129,24 @@ public class RefundService {
 
     @Transactional
     public Refund updateRefundStatus(
+            UUID userId,
             UUID paymentId,
             UUID refundId,
             RefundStatus requestedStatus
     ) {
-
-        // Step 1: Lock the parent payment.
-        paymentRepository.findByIdForUpdate(paymentId)
+        // Lock the owned parent payment first.
+        paymentRepository.findByIdAndUserIdForUpdate(paymentId, userId)
                 .orElseThrow(() -> new PaymentNotFoundException(
                         "Payment not found: " + paymentId
                 ));
 
-        // Step 2: Lock and retrieve the refund.
+        // Then lock the refund belonging to that payment.
         Refund refund = refundRepository
                 .findByIdAndPayment_IdForUpdate(refundId, paymentId)
                 .orElseThrow(() -> new RefundNotFoundException(
                         "Refund not found: " + refundId
                 ));
 
-        // Step 3: Read and validate the current status.
         RefundStatus currentStatus =
                 RefundStatus.valueOf(refund.getStatus());
 
@@ -168,7 +157,6 @@ public class RefundService {
             );
         }
 
-        // Step 4: Perform an atomic conditional database update.
         int updated = refundRepository.updateStatusIfCurrent(
                 refundId,
                 paymentId,
@@ -176,17 +164,14 @@ public class RefundService {
                 requestedStatus.name()
         );
 
-        // Zero updated rows means the expected state no longer matches.
         if (updated == 0) {
             throw new InvalidPaymentStatusTransitionException(
                     "Refund status changed concurrently. Please retry."
             );
         }
 
-        // Step 5: Synchronize the managed entity.
         refund.setStatus(requestedStatus.name());
 
-        // Step 6: Record history in the same transaction.
         historyRepository.save(
                 new RefundStatusHistory(
                         refund,
@@ -200,9 +185,14 @@ public class RefundService {
 
     @Transactional(readOnly = true)
     public List<RefundStatusHistoryResponse> getRefundStatusHistory(
+            UUID userId,
             UUID paymentId,
             UUID refundId
     ) {
+        paymentRepository.findByIdAndUser_Id(paymentId, userId)
+                .orElseThrow(() -> new PaymentNotFoundException(
+                        "Payment not found: " + paymentId
+                ));
 
         refundRepository.findByIdAndPayment_Id(refundId, paymentId)
                 .orElseThrow(() -> new RefundNotFoundException(

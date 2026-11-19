@@ -2,10 +2,12 @@
 package com.payflow.backend;
 
 import com.payflow.backend.entity.Payment;
+import com.payflow.backend.entity.User;
 import com.payflow.backend.exception.GlobalExceptionHandler;
 import com.payflow.backend.exception.PaymentNotFoundException;
 import com.payflow.backend.service.PaymentService;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -19,11 +21,18 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableHandlerMethodArgumentResolver;
 
+import org.springframework.http.MediaType;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
+
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -43,7 +52,30 @@ class PaymentControllerTest {
 
     private MockMvc mockMvc;
 
+    private UUID userId;
+
+    private User user;
+
     private void setUp() throws Exception {
+
+        userId = UUID.randomUUID();
+
+        user = new User(
+                "payment-test@payflow.com",
+                "password",
+                "USER"
+        );
+
+        Jwt jwt = Jwt.withTokenValue("test-token")
+                .header("alg", "none")
+                .subject(userId.toString())
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new JwtAuthenticationToken(jwt)
+        );
 
         LocalValidatorFactoryBean validator =
                 new LocalValidatorFactoryBean();
@@ -54,26 +86,35 @@ class PaymentControllerTest {
                 .standaloneSetup(paymentController)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setCustomArgumentResolvers(
+                        new AuthenticationPrincipalArgumentResolver(),
                         new PageableHandlerMethodArgumentResolver()
                 )
                 .setValidator(validator)
                 .build();
     }
 
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
     // GET TEST 1: Retrieve payment by ID
     @Test
     void shouldReturnPaymentById() throws Exception {
+
         setUp();
 
         UUID id = UUID.randomUUID();
 
         Payment payment = new Payment(
+                user,
                 new BigDecimal("499.99"),
                 "INR",
                 "PENDING"
         );
 
-        when(paymentService.getPaymentById(id)).thenReturn(payment);
+        when(paymentService.getPaymentById(userId, id))
+                .thenReturn(payment);
 
         mockMvc.perform(get("/api/v1/payments/{id}", id))
                 .andExpect(status().isOk())
@@ -81,17 +122,18 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.currency").value("INR"))
                 .andExpect(jsonPath("$.status").value("PENDING"));
 
-        verify(paymentService).getPaymentById(id);
+        verify(paymentService).getPaymentById(userId, id);
     }
 
     // GET TEST 2: Payment not found
     @Test
     void shouldReturn404WhenPaymentDoesNotExist() throws Exception {
+
         setUp();
 
         UUID id = UUID.randomUUID();
 
-        when(paymentService.getPaymentById(id))
+        when(paymentService.getPaymentById(userId, id))
                 .thenThrow(new PaymentNotFoundException(
                         "Payment not found: " + id
                 ));
@@ -105,9 +147,11 @@ class PaymentControllerTest {
     // GET TEST 3: Paginated payments
     @Test
     void shouldReturnPaginatedPayments() throws Exception {
+
         setUp();
 
         Payment payment = new Payment(
+                user,
                 new BigDecimal("499.99"),
                 "INR",
                 "PENDING"
@@ -123,7 +167,10 @@ class PaymentControllerTest {
                 1
         );
 
-        when(paymentService.getPayments(any())).thenReturn(page);
+        when(paymentService.getPayments(
+                eq(userId),
+                any()
+        )).thenReturn(page);
 
         mockMvc.perform(get("/api/v1/payments")
                         .param("page", "0")
@@ -133,15 +180,17 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].currency").value("INR"));
 
-        verify(paymentService).getPayments(any());
+        verify(paymentService).getPayments(eq(userId), any());
     }
 
     // POST TEST 1: Successful payment creation
     @Test
     void shouldCreatePaymentSuccessfully() throws Exception {
+
         setUp();
 
         Payment payment = new Payment(
+                user,
                 new BigDecimal("499.99"),
                 "INR",
                 "PENDING",
@@ -149,6 +198,7 @@ class PaymentControllerTest {
         );
 
         when(paymentService.createPayment(
+                userId,
                 new BigDecimal("499.99"),
                 "INR",
                 "test-payment-001"
@@ -156,7 +206,7 @@ class PaymentControllerTest {
 
         mockMvc.perform(post("/api/v1/payments")
                         .header("Idempotency-Key", "test-payment-001")
-                        .contentType("application/json")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                     "amount": 499.99,
@@ -171,6 +221,7 @@ class PaymentControllerTest {
                         .value("test-payment-001"));
 
         verify(paymentService).createPayment(
+                userId,
                 new BigDecimal("499.99"),
                 "INR",
                 "test-payment-001"
@@ -180,11 +231,12 @@ class PaymentControllerTest {
     // POST TEST 2: Reject zero amount
     @Test
     void shouldRejectZeroAmount() throws Exception {
+
         setUp();
 
         mockMvc.perform(post("/api/v1/payments")
                         .header("Idempotency-Key", "test-zero-001")
-                        .contentType("application/json")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                     "amount": 0,
@@ -201,11 +253,12 @@ class PaymentControllerTest {
     // POST TEST 3: Reject invalid currency
     @Test
     void shouldRejectInvalidCurrency() throws Exception {
+
         setUp();
 
         mockMvc.perform(post("/api/v1/payments")
                         .header("Idempotency-Key", "test-currency-001")
-                        .contentType("application/json")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                     "amount": 499.99,
@@ -221,11 +274,12 @@ class PaymentControllerTest {
     // POST TEST 4: Reject missing amount
     @Test
     void shouldRejectMissingAmount() throws Exception {
+
         setUp();
 
         mockMvc.perform(post("/api/v1/payments")
                         .header("Idempotency-Key", "test-missing-001")
-                        .contentType("application/json")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                     "currency": "INR"
@@ -240,10 +294,11 @@ class PaymentControllerTest {
     // POST TEST 5: Reject missing Idempotency-Key header
     @Test
     void shouldRejectMissingIdempotencyKey() throws Exception {
+
         setUp();
 
         mockMvc.perform(post("/api/v1/payments")
-                        .contentType("application/json")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                     "amount": 499.99,
@@ -261,11 +316,12 @@ class PaymentControllerTest {
     // POST TEST 6: Reject blank Idempotency-Key
     @Test
     void shouldRejectBlankIdempotencyKey() throws Exception {
+
         setUp();
 
         mockMvc.perform(post("/api/v1/payments")
                         .header("Idempotency-Key", "   ")
-                        .contentType("application/json")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                     "amount": 499.99,
@@ -281,13 +337,14 @@ class PaymentControllerTest {
     // POST TEST 7: Reject Idempotency-Key longer than 100 characters
     @Test
     void shouldRejectOversizedIdempotencyKey() throws Exception {
+
         setUp();
 
         String longKey = "a".repeat(101);
 
         mockMvc.perform(post("/api/v1/payments")
                         .header("Idempotency-Key", longKey)
-                        .contentType("application/json")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                     "amount": 499.99,

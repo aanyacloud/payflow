@@ -4,9 +4,7 @@ package com.payflow.backend;
 import com.payflow.backend.dto.CreatePaymentRequest;
 import com.payflow.backend.dto.UpdatePaymentStatusRequest;
 import com.payflow.backend.dto.PaymentStatusHistoryResponse;
-
 import com.payflow.backend.entity.Payment;
-
 import com.payflow.backend.service.PaymentService;
 import com.payflow.backend.validation.IdempotencyKeyValidator;
 
@@ -17,6 +15,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -32,63 +32,70 @@ public class PaymentController {
         this.paymentService = paymentService;
     }
 
-    // Create a new payment.
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Payment createPayment(
             @Valid @RequestBody CreatePaymentRequest request,
-            @RequestHeader("Idempotency-Key") String idempotencyKey
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @AuthenticationPrincipal Jwt jwt
     ) {
-
-        // Validate the idempotency key at the API boundary.
         IdempotencyKeyValidator.validate(idempotencyKey);
 
         return paymentService.createPayment(
+                UUID.fromString(jwt.getSubject()),
                 request.amount(),
                 request.currency(),
                 idempotencyKey
         );
     }
 
-    // Retrieve a payment by ID.
     @GetMapping("/{id}")
     public Payment getPayment(
-            @PathVariable UUID id
+            @PathVariable UUID id,
+            @AuthenticationPrincipal Jwt jwt
     ) {
-        return paymentService.getPaymentById(id);
+        return paymentService.getPaymentById(
+                UUID.fromString(jwt.getSubject()),
+                id
+        );
     }
 
-    // Retrieve payments with pagination.
     @GetMapping
     public Page<Payment> getPayments(
             @PageableDefault(
                     size = 10,
                     sort = "createdAt",
                     direction = Sort.Direction.DESC
-            ) Pageable pageable
+            ) Pageable pageable,
+            @AuthenticationPrincipal Jwt jwt
     ) {
-        return paymentService.getPayments(pageable);
+        return paymentService.getPayments(
+                UUID.fromString(jwt.getSubject()),
+                pageable
+        );
     }
 
-    // Update payment status.
     @PatchMapping("/{id}/status")
     public Payment updatePaymentStatus(
             @PathVariable UUID id,
-            @Valid @RequestBody UpdatePaymentStatusRequest request
+            @Valid @RequestBody UpdatePaymentStatusRequest request,
+            @AuthenticationPrincipal Jwt jwt
     ) {
-
         return paymentService.updatePaymentStatus(
+                UUID.fromString(jwt.getSubject()),
                 id,
                 request.status()
         );
     }
 
-    // Retrieve the complete status history of a payment.
     @GetMapping("/{id}/history")
     public List<PaymentStatusHistoryResponse> getPaymentStatusHistory(
-            @PathVariable UUID id
+            @PathVariable UUID id,
+            @AuthenticationPrincipal Jwt jwt
     ) {
-
-        return paymentService.getPaymentStatusHistory(id);
+        return paymentService.getPaymentStatusHistory(
+                UUID.fromString(jwt.getSubject()),
+                id
+        );
     }
 }

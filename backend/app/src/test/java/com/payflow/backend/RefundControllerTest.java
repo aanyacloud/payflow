@@ -4,6 +4,8 @@ package com.payflow.backend;
 import com.payflow.backend.exception.GlobalExceptionHandler;
 import com.payflow.backend.service.RefundService;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -11,10 +13,15 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -32,7 +39,21 @@ class RefundControllerTest {
 
     private MockMvc mockMvc;
 
-    private void setUp() throws Exception {
+    @BeforeEach
+    void setUp() {
+
+        UUID userId = UUID.randomUUID();
+
+        Jwt jwt = Jwt.withTokenValue("test-token")
+                .header("alg", "none")
+                .subject(userId.toString())
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new JwtAuthenticationToken(jwt)
+        );
 
         LocalValidatorFactoryBean validator =
                 new LocalValidatorFactoryBean();
@@ -43,13 +64,20 @@ class RefundControllerTest {
                 .standaloneSetup(refundController)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
+                .setCustomArgumentResolvers(
+                        new AuthenticationPrincipalArgumentResolver()
+                )
                 .build();
+    }
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
     }
 
     // TEST 1: Reject missing Idempotency-Key header
     @Test
     void shouldRejectMissingIdempotencyKey() throws Exception {
-        setUp();
 
         UUID paymentId = UUID.randomUUID();
 
@@ -74,7 +102,6 @@ class RefundControllerTest {
     // TEST 2: Reject blank Idempotency-Key
     @Test
     void shouldRejectBlankIdempotencyKey() throws Exception {
-        setUp();
 
         UUID paymentId = UUID.randomUUID();
 
@@ -98,7 +125,6 @@ class RefundControllerTest {
     // TEST 3: Reject Idempotency-Key longer than 100 characters
     @Test
     void shouldRejectOversizedIdempotencyKey() throws Exception {
-        setUp();
 
         UUID paymentId = UUID.randomUUID();
         String longKey = "a".repeat(101);

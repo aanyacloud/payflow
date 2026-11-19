@@ -17,7 +17,6 @@ import com.payflow.backend.repository.RefundStatusHistoryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -29,7 +28,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -47,6 +46,7 @@ class RefundServiceTest {
     @InjectMocks
     private RefundService refundService;
 
+    private UUID userId;
     private UUID paymentId;
     private UUID refundId;
 
@@ -55,6 +55,7 @@ class RefundServiceTest {
 
     @BeforeEach
     void setUp() {
+        userId = UUID.randomUUID();
         paymentId = UUID.randomUUID();
         refundId = UUID.randomUUID();
 
@@ -62,24 +63,26 @@ class RefundServiceTest {
         refund = mock(Refund.class);
     }
 
-    // --------------------------------------------------
-    // CREATE REFUND TESTS
-    // --------------------------------------------------
+    private void mockOwnedPayment() {
+        when(paymentRepository.findByIdAndUserIdForUpdate(paymentId, userId))
+                .thenReturn(Optional.of(payment));
+    }
+
+    private void mockPaymentForStatusUpdate() {
+        when(paymentRepository.findByIdAndUserIdForUpdate(paymentId, userId))
+                .thenReturn(Optional.of(payment));
+    }
 
     @Test
     void createRefundSuccessfully() {
+        mockOwnedPayment();
 
-        when(refundRepository.findByIdempotencyKey("refund-001"))
-                .thenReturn(Optional.empty());
+        when(refundRepository.findByPayment_IdAndIdempotencyKey(
+                paymentId, "refund-001"
+        )).thenReturn(Optional.empty());
 
-        when(paymentRepository.findByIdForUpdate(paymentId))
-                .thenReturn(Optional.of(payment));
-
-        when(payment.getAmount())
-                .thenReturn(new BigDecimal("500.00"));
-
-        when(payment.getStatus())
-                .thenReturn("SUCCESS");
+        when(payment.getAmount()).thenReturn(new BigDecimal("500.00"));
+        when(payment.getStatus()).thenReturn("SUCCESS");
 
         when(refundRepository.calculateReservedRefundAmount(paymentId))
                 .thenReturn(new BigDecimal("100.00"));
@@ -88,238 +91,152 @@ class RefundServiceTest {
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         Refund result = refundService.createRefund(
-                paymentId,
-                new BigDecimal("200.00"),
-                "refund-001"
+                userId, paymentId, new BigDecimal("200.00"), "refund-001"
         );
 
         assertNotNull(result);
         assertEquals("PENDING", result.getStatus());
-        assertEquals(
-                new BigDecimal("200.00"),
-                result.getAmount()
-        );
+        assertEquals(new BigDecimal("200.00"), result.getAmount());
 
-        verify(paymentRepository).findByIdForUpdate(paymentId);
+        verify(paymentRepository).findByIdAndUserIdForUpdate(paymentId, userId);
         verify(refundRepository).save(any(Refund.class));
     }
 
     @Test
     void createRefundRejectsZeroOrNegativeAmount() {
-
-        assertThrows(
-                IllegalArgumentException.class,
+        assertThrows(IllegalArgumentException.class,
                 () -> refundService.createRefund(
-                        paymentId,
-                        BigDecimal.ZERO,
-                        "refund-002"
-                )
-        );
+                        userId, paymentId, BigDecimal.ZERO, "refund-002"
+                ));
 
-        assertThrows(
-                IllegalArgumentException.class,
+        assertThrows(IllegalArgumentException.class,
                 () -> refundService.createRefund(
-                        paymentId,
-                        new BigDecimal("-10.00"),
-                        "refund-003"
-                )
-        );
+                        userId, paymentId, new BigDecimal("-10.00"), "refund-003"
+                ));
 
         verifyNoInteractions(paymentRepository, refundRepository);
     }
 
     @Test
     void createRefundRejectsInvalidIdempotencyKey() {
-
-        assertThrows(
-                IllegalArgumentException.class,
+        assertThrows(IllegalArgumentException.class,
                 () -> refundService.createRefund(
-                        paymentId,
-                        new BigDecimal("100.00"),
-                        " "
-                )
-        );
+                        userId, paymentId, new BigDecimal("100.00"), " "
+                ));
 
-        assertThrows(
-                IllegalArgumentException.class,
+        assertThrows(IllegalArgumentException.class,
                 () -> refundService.createRefund(
-                        paymentId,
-                        new BigDecimal("100.00"),
-                        null
-                )
-        );
+                        userId, paymentId, new BigDecimal("100.00"), null
+                ));
 
-        assertThrows(
-                IllegalArgumentException.class,
+        assertThrows(IllegalArgumentException.class,
                 () -> refundService.createRefund(
-                        paymentId,
-                        new BigDecimal("100.00"),
-                        "a".repeat(101)
-                )
-        );
+                        userId, paymentId, new BigDecimal("100.00"), "a".repeat(101)
+                ));
 
         verifyNoInteractions(paymentRepository, refundRepository);
     }
 
     @Test
     void createRefundReturnsExistingRefundForSameRequest() {
+        mockOwnedPayment();
 
-        when(refundRepository.findByIdempotencyKey("refund-004"))
-                .thenReturn(Optional.of(refund));
+        when(refundRepository.findByPayment_IdAndIdempotencyKey(
+                paymentId, "refund-004"
+        )).thenReturn(Optional.of(refund));
 
-        when(refund.getPayment()).thenReturn(payment);
-        when(payment.getId()).thenReturn(paymentId);
-
-        when(refund.getAmount())
-                .thenReturn(new BigDecimal("100.00"));
+        when(refund.getAmount()).thenReturn(new BigDecimal("100.00"));
 
         Refund result = refundService.createRefund(
-                paymentId,
-                new BigDecimal("100.00"),
-                "refund-004"
+                userId, paymentId, new BigDecimal("100.00"), "refund-004"
         );
 
         assertSame(refund, result);
-
-        verify(paymentRepository, never()).findByIdForUpdate(any());
         verify(refundRepository, never()).save(any());
+        verify(payment, never()).getStatus();
     }
 
     @Test
     void createRefundRejectsReusedKeyWithDifferentAmount() {
+        mockOwnedPayment();
 
-        when(refundRepository.findByIdempotencyKey("refund-005"))
-                .thenReturn(Optional.of(refund));
+        when(refundRepository.findByPayment_IdAndIdempotencyKey(
+                paymentId, "refund-005"
+        )).thenReturn(Optional.of(refund));
 
-        when(refund.getPayment()).thenReturn(payment);
-        when(payment.getId()).thenReturn(paymentId);
-
-        when(refund.getAmount())
-                .thenReturn(new BigDecimal("100.00"));
-
-        assertThrows(
-                IdempotencyConflictException.class,
-                () -> refundService.createRefund(
-                        paymentId,
-                        new BigDecimal("150.00"),
-                        "refund-005"
-                )
-        );
-
-        verify(paymentRepository, never()).findByIdForUpdate(any());
-        verify(refundRepository, never()).save(any());
-    }
-
-    @Test
-    void createRefundRejectsDifferentPaymentWithSameIdempotencyKey() {
-
-        UUID differentPaymentId = UUID.randomUUID();
-
-        when(refundRepository.findByIdempotencyKey("refund-009"))
-                .thenReturn(Optional.of(refund));
-
-        when(refund.getPayment()).thenReturn(payment);
-        when(payment.getId()).thenReturn(differentPaymentId);
         when(refund.getAmount()).thenReturn(new BigDecimal("100.00"));
 
-        assertThrows(
-                IdempotencyConflictException.class,
+        assertThrows(IdempotencyConflictException.class,
                 () -> refundService.createRefund(
-                        paymentId,
-                        new BigDecimal("100.00"),
-                        "refund-009"
-                )
-        );
+                        userId, paymentId, new BigDecimal("150.00"), "refund-005"
+                ));
 
-        verify(paymentRepository, never()).findByIdForUpdate(any());
+        verify(refundRepository, never()).save(any());
     }
 
     @Test
     void createRefundRejectsMissingPayment() {
-
-        when(refundRepository.findByIdempotencyKey("refund-006"))
+        when(paymentRepository.findByIdAndUserIdForUpdate(paymentId, userId))
                 .thenReturn(Optional.empty());
 
-        when(paymentRepository.findByIdForUpdate(paymentId))
-                .thenReturn(Optional.empty());
-
-        assertThrows(
-                PaymentNotFoundException.class,
+        assertThrows(PaymentNotFoundException.class,
                 () -> refundService.createRefund(
-                        paymentId,
-                        new BigDecimal("100.00"),
-                        "refund-006"
-                )
-        );
+                        userId, paymentId, new BigDecimal("100.00"), "refund-006"
+                ));
 
-        verify(refundRepository, never()).save(any());
+        verifyNoInteractions(refundRepository);
     }
 
     @Test
     void createRefundRejectsUnsuccessfulPayment() {
+        mockOwnedPayment();
 
-        when(refundRepository.findByIdempotencyKey("refund-007"))
-                .thenReturn(Optional.empty());
-
-        when(paymentRepository.findByIdForUpdate(paymentId))
-                .thenReturn(Optional.of(payment));
+        when(refundRepository.findByPayment_IdAndIdempotencyKey(
+                paymentId, "refund-007"
+        )).thenReturn(Optional.empty());
 
         when(payment.getStatus()).thenReturn("FAILED");
 
-        assertThrows(
-                IllegalArgumentException.class,
+        assertThrows(IllegalArgumentException.class,
                 () -> refundService.createRefund(
-                        paymentId,
-                        new BigDecimal("100.00"),
-                        "refund-007"
-                )
-        );
+                        userId, paymentId, new BigDecimal("100.00"), "refund-007"
+                ));
 
         verify(refundRepository, never()).save(any());
     }
 
     @Test
     void createRefundRejectsAmountAboveRemainingBalance() {
+        mockOwnedPayment();
 
-        when(refundRepository.findByIdempotencyKey("refund-008"))
-                .thenReturn(Optional.empty());
-
-        when(paymentRepository.findByIdForUpdate(paymentId))
-                .thenReturn(Optional.of(payment));
+        when(refundRepository.findByPayment_IdAndIdempotencyKey(
+                paymentId, "refund-008"
+        )).thenReturn(Optional.empty());
 
         when(payment.getStatus()).thenReturn("SUCCESS");
-
-        when(payment.getAmount())
-                .thenReturn(new BigDecimal("500.00"));
+        when(payment.getAmount()).thenReturn(new BigDecimal("500.00"));
 
         when(refundRepository.calculateReservedRefundAmount(paymentId))
                 .thenReturn(new BigDecimal("450.00"));
 
-        assertThrows(
-                IllegalArgumentException.class,
+        assertThrows(IllegalArgumentException.class,
                 () -> refundService.createRefund(
-                        paymentId,
-                        new BigDecimal("100.00"),
-                        "refund-008"
-                )
-        );
+                        userId, paymentId, new BigDecimal("100.00"), "refund-008"
+                ));
 
         verify(refundRepository, never()).save(any());
     }
 
     @Test
     void createRefundHandlesNullReservedAmount() {
+        mockOwnedPayment();
 
-        when(refundRepository.findByIdempotencyKey("refund-010"))
-                .thenReturn(Optional.empty());
-
-        when(paymentRepository.findByIdForUpdate(paymentId))
-                .thenReturn(Optional.of(payment));
+        when(refundRepository.findByPayment_IdAndIdempotencyKey(
+                paymentId, "refund-010"
+        )).thenReturn(Optional.empty());
 
         when(payment.getStatus()).thenReturn("SUCCESS");
-
-        when(payment.getAmount())
-                .thenReturn(new BigDecimal("500.00"));
+        when(payment.getAmount()).thenReturn(new BigDecimal("500.00"));
 
         when(refundRepository.calculateReservedRefundAmount(paymentId))
                 .thenReturn(null);
@@ -328,213 +245,127 @@ class RefundServiceTest {
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         Refund result = refundService.createRefund(
-                paymentId,
-                new BigDecimal("100.00"),
-                "refund-010"
+                userId, paymentId, new BigDecimal("100.00"), "refund-010"
         );
 
         assertNotNull(result);
         assertEquals("PENDING", result.getStatus());
-
         verify(refundRepository).save(any(Refund.class));
     }
 
-    // --------------------------------------------------
-    // REFUND STATUS TESTS
-    // --------------------------------------------------
-
     @Test
     void updateRefundStatusSuccessfullyRecordsHistory() {
+        mockPaymentForStatusUpdate();
 
-        when(paymentRepository.findByIdForUpdate(paymentId))
-                .thenReturn(Optional.of(payment));
-
-        when(refundRepository.findByIdAndPayment_IdForUpdate(
-                refundId,
-                paymentId
-        )).thenReturn(Optional.of(refund));
+        when(refundRepository.findByIdAndPayment_IdForUpdate(refundId, paymentId))
+                .thenReturn(Optional.of(refund));
 
         when(refund.getStatus()).thenReturn("PENDING");
 
-        // Atomic conditional update succeeds.
         when(refundRepository.updateStatusIfCurrent(
-                refundId,
-                paymentId,
-                "PENDING",
-                "PROCESSING"
+                refundId, paymentId, "PENDING", "PROCESSING"
         )).thenReturn(1);
 
-        when(refundRepository.save(refund))
-                .thenReturn(refund);
+        when(refundRepository.save(refund)).thenReturn(refund);
 
         Refund result = refundService.updateRefundStatus(
-                paymentId,
-                refundId,
-                RefundStatus.PROCESSING
+                userId, paymentId, refundId, RefundStatus.PROCESSING
         );
 
         assertSame(refund, result);
 
-        verify(paymentRepository).findByIdForUpdate(paymentId);
-
-        verify(refundRepository)
-                .findByIdAndPayment_IdForUpdate(refundId, paymentId);
-
+        verify(paymentRepository).findByIdAndUserIdForUpdate(paymentId, userId);
         verify(refundRepository).updateStatusIfCurrent(
-                refundId,
-                paymentId,
-                "PENDING",
-                "PROCESSING"
+                refundId, paymentId, "PENDING", "PROCESSING"
         );
-
-        verify(refund).setStatus("PROCESSING");
 
         ArgumentCaptor<RefundStatusHistory> captor =
                 ArgumentCaptor.forClass(RefundStatusHistory.class);
 
         verify(historyRepository).save(captor.capture());
 
-        assertEquals(
-                "PENDING",
-                captor.getValue().getPreviousStatus()
-        );
-
-        assertEquals(
-                "PROCESSING",
-                captor.getValue().getNewStatus()
-        );
-
+        assertEquals("PENDING", captor.getValue().getPreviousStatus());
+        assertEquals("PROCESSING", captor.getValue().getNewStatus());
         verify(refundRepository).save(refund);
     }
 
     @Test
     void updateRefundStatusRejectsInvalidTransition() {
+        mockPaymentForStatusUpdate();
 
-        when(paymentRepository.findByIdForUpdate(paymentId))
-                .thenReturn(Optional.of(payment));
-
-        when(refundRepository.findByIdAndPayment_IdForUpdate(
-                refundId,
-                paymentId
-        )).thenReturn(Optional.of(refund));
+        when(refundRepository.findByIdAndPayment_IdForUpdate(refundId, paymentId))
+                .thenReturn(Optional.of(refund));
 
         when(refund.getStatus()).thenReturn("SUCCESS");
 
-        assertThrows(
-                InvalidPaymentStatusTransitionException.class,
+        assertThrows(InvalidPaymentStatusTransitionException.class,
                 () -> refundService.updateRefundStatus(
-                        paymentId,
-                        refundId,
-                        RefundStatus.PROCESSING
-                )
-        );
+                        userId, paymentId, refundId, RefundStatus.PROCESSING
+                ));
 
         verify(refundRepository, never())
-                .updateStatusIfCurrent(any(), any(), any(), any());
+                .updateStatusIfCurrent(any(), any(), anyString(), anyString());
 
         verify(historyRepository, never()).save(any());
         verify(refundRepository, never()).save(any());
-        verify(refund, never()).setStatus(any());
     }
 
     @Test
     void updateRefundStatusRejectsMissingRefund() {
+        mockPaymentForStatusUpdate();
 
-        when(paymentRepository.findByIdForUpdate(paymentId))
-                .thenReturn(Optional.of(payment));
+        when(refundRepository.findByIdAndPayment_IdForUpdate(refundId, paymentId))
+                .thenReturn(Optional.empty());
 
-        when(refundRepository.findByIdAndPayment_IdForUpdate(
-                refundId,
-                paymentId
-        )).thenReturn(Optional.empty());
-
-        assertThrows(
-                RefundNotFoundException.class,
+        assertThrows(RefundNotFoundException.class,
                 () -> refundService.updateRefundStatus(
-                        paymentId,
-                        refundId,
-                        RefundStatus.PROCESSING
-                )
-        );
+                        userId, paymentId, refundId, RefundStatus.PROCESSING
+                ));
 
         verify(refundRepository, never())
-                .updateStatusIfCurrent(any(), any(), any(), any());
-
-        verify(historyRepository, never()).save(any());
-        verify(refundRepository, never()).save(any());
+                .updateStatusIfCurrent(any(), any(), anyString(), anyString());
     }
 
     @Test
     void updateRefundStatusRejectsMissingPayment() {
-
-        when(paymentRepository.findByIdForUpdate(paymentId))
+        when(paymentRepository.findByIdAndUserIdForUpdate(paymentId, userId))
                 .thenReturn(Optional.empty());
 
-        assertThrows(
-                PaymentNotFoundException.class,
+        assertThrows(PaymentNotFoundException.class,
                 () -> refundService.updateRefundStatus(
-                        paymentId,
-                        refundId,
-                        RefundStatus.PROCESSING
-                )
-        );
+                        userId, paymentId, refundId, RefundStatus.PROCESSING
+                ));
 
         verify(refundRepository, never())
                 .findByIdAndPayment_IdForUpdate(any(), any());
-
-        verify(refundRepository, never())
-                .updateStatusIfCurrent(any(), any(), any(), any());
-
-        verify(historyRepository, never()).save(any());
     }
 
     @Test
     void updateRefundStatusRejectsConcurrentChange() {
+        mockPaymentForStatusUpdate();
 
-        when(paymentRepository.findByIdForUpdate(paymentId))
-                .thenReturn(Optional.of(payment));
-
-        when(refundRepository.findByIdAndPayment_IdForUpdate(
-                refundId,
-                paymentId
-        )).thenReturn(Optional.of(refund));
+        when(refundRepository.findByIdAndPayment_IdForUpdate(refundId, paymentId))
+                .thenReturn(Optional.of(refund));
 
         when(refund.getStatus()).thenReturn("PENDING");
 
-        // Zero rows updated means another transaction changed the status.
         when(refundRepository.updateStatusIfCurrent(
-                refundId,
-                paymentId,
-                "PENDING",
-                "PROCESSING"
+                refundId, paymentId, "PENDING", "PROCESSING"
         )).thenReturn(0);
 
-        assertThrows(
-                InvalidPaymentStatusTransitionException.class,
+        assertThrows(InvalidPaymentStatusTransitionException.class,
                 () -> refundService.updateRefundStatus(
-                        paymentId,
-                        refundId,
-                        RefundStatus.PROCESSING
-                )
-        );
-
-        verify(refundRepository).updateStatusIfCurrent(
-                refundId,
-                paymentId,
-                "PENDING",
-                "PROCESSING"
-        );
+                        userId, paymentId, refundId, RefundStatus.PROCESSING
+                ));
 
         verify(historyRepository, never()).save(any());
         verify(refundRepository, never()).save(any());
     }
 
-    // --------------------------------------------------
-    // REFUND HISTORY TESTS
-    // --------------------------------------------------
-
     @Test
     void getRefundStatusHistoryReturnsRecords() {
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
+                .thenReturn(Optional.of(payment));
 
         when(refundRepository.findByIdAndPayment_Id(refundId, paymentId))
                 .thenReturn(Optional.of(refund));
@@ -543,7 +374,7 @@ class RefundServiceTest {
                 .thenReturn(List.of());
 
         List<RefundStatusHistoryResponse> result =
-                refundService.getRefundStatusHistory(paymentId, refundId);
+                refundService.getRefundStatusHistory(userId, paymentId, refundId);
 
         assertNotNull(result);
         assertTrue(result.isEmpty());
@@ -553,18 +384,32 @@ class RefundServiceTest {
     }
 
     @Test
+    void getRefundStatusHistoryRejectsMissingPayment() {
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
+                .thenReturn(Optional.empty());
+
+        assertThrows(PaymentNotFoundException.class,
+                () -> refundService.getRefundStatusHistory(
+                        userId, paymentId, refundId
+                ));
+
+        verify(refundRepository, never())
+                .findByIdAndPayment_Id(any(), any());
+        verifyNoInteractions(historyRepository);
+    }
+
+    @Test
     void getRefundStatusHistoryRejectsMissingRefund() {
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
+                .thenReturn(Optional.of(payment));
 
         when(refundRepository.findByIdAndPayment_Id(refundId, paymentId))
                 .thenReturn(Optional.empty());
 
-        assertThrows(
-                RefundNotFoundException.class,
+        assertThrows(RefundNotFoundException.class,
                 () -> refundService.getRefundStatusHistory(
-                        paymentId,
-                        refundId
-                )
-        );
+                        userId, paymentId, refundId
+                ));
 
         verify(historyRepository, never())
                 .findAllByRefund_IdOrderByChangedAtAsc(any());

@@ -3,11 +3,13 @@ package com.payflow.backend;
 
 import com.payflow.backend.entity.Payment;
 import com.payflow.backend.entity.PaymentStatus;
+import com.payflow.backend.entity.User;
 import com.payflow.backend.exception.GlobalExceptionHandler;
 import com.payflow.backend.exception.InvalidPaymentStatusTransitionException;
 import com.payflow.backend.exception.PaymentNotFoundException;
 import com.payflow.backend.service.PaymentService;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,11 +19,16 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import org.springframework.http.MediaType;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.mockito.Mockito.*;
@@ -38,9 +45,23 @@ class PaymentStatusControllerTest {
     private PaymentController paymentController;
 
     private MockMvc mockMvc;
+    private UUID userId;
 
     @BeforeEach
     void setUp() {
+
+        userId = UUID.randomUUID();
+
+        Jwt jwt = Jwt.withTokenValue("test-token")
+                .header("alg", "none")
+                .subject(userId.toString())
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new JwtAuthenticationToken(jwt)
+        );
 
         LocalValidatorFactoryBean validator =
                 new LocalValidatorFactoryBean();
@@ -51,7 +72,15 @@ class PaymentStatusControllerTest {
                 .standaloneSetup(paymentController)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
+                .setCustomArgumentResolvers(
+                        new AuthenticationPrincipalArgumentResolver()
+                )
                 .build();
+    }
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
     }
 
     // Test 1: Successfully update PENDING to PROCESSING.
@@ -60,13 +89,21 @@ class PaymentStatusControllerTest {
 
         UUID paymentId = UUID.randomUUID();
 
+        User user = new User(
+                "status-test@payflow.com",
+                "password",
+                "USER"
+        );
+
         Payment processingPayment = new Payment(
+                user,
                 new BigDecimal("799.99"),
                 "INR",
                 PaymentStatus.PROCESSING.name()
         );
 
         when(paymentService.updatePaymentStatus(
+                userId,
                 paymentId,
                 PaymentStatus.PROCESSING
         )).thenReturn(processingPayment);
@@ -86,6 +123,7 @@ class PaymentStatusControllerTest {
                 .andExpect(jsonPath("$.currency").value("INR"));
 
         verify(paymentService).updatePaymentStatus(
+                userId,
                 paymentId,
                 PaymentStatus.PROCESSING
         );
@@ -98,6 +136,7 @@ class PaymentStatusControllerTest {
         UUID paymentId = UUID.randomUUID();
 
         when(paymentService.updatePaymentStatus(
+                userId,
                 paymentId,
                 PaymentStatus.SUCCESS
         )).thenThrow(
@@ -130,6 +169,7 @@ class PaymentStatusControllerTest {
         UUID paymentId = UUID.randomUUID();
 
         when(paymentService.updatePaymentStatus(
+                userId,
                 paymentId,
                 PaymentStatus.PROCESSING
         )).thenThrow(

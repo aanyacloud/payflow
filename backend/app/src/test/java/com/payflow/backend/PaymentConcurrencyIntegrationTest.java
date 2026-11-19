@@ -5,12 +5,15 @@ import com.payflow.backend.entity.Payment;
 import com.payflow.backend.entity.PaymentStatus;
 import com.payflow.backend.entity.Refund;
 import com.payflow.backend.entity.RefundStatus;
+import com.payflow.backend.entity.User;
 import com.payflow.backend.exception.InvalidPaymentStatusTransitionException;
 import com.payflow.backend.repository.PaymentRepository;
 import com.payflow.backend.repository.RefundRepository;
+import com.payflow.backend.repository.UserRepository;
 import com.payflow.backend.service.PaymentService;
 import com.payflow.backend.service.RefundService;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +55,23 @@ class PaymentConcurrencyIntegrationTest {
     @Autowired
     private RefundRepository refundRepository;
 
+    @Autowired
+    private UserRepository userRepository;
+
+    private UUID userId;
+
+    @BeforeEach
+    void setUp() {
+
+        User user = new User(
+                "concurrency-" + UUID.randomUUID() + "@payflow.com",
+                "test-password",
+                "USER"
+        );
+
+        userId = userRepository.save(user).getId();
+    }
+
     // TEST 1: Concurrent requests with the same idempotency key
     @Test
     void concurrentRequestsWithSameKeyShouldCreateOnlyOnePayment()
@@ -90,6 +110,7 @@ class PaymentConcurrencyIntegrationTest {
                     }
 
                     return paymentService.createPayment(
+                            userId,
                             amount,
                             currency,
                             idempotencyKey
@@ -123,14 +144,15 @@ class PaymentConcurrencyIntegrationTest {
             );
 
             long databaseCount =
-                    paymentRepository.countByIdempotencyKey(
+                    paymentRepository.countByUser_IdAndIdempotencyKey(
+                            userId,
                             idempotencyKey
                     );
 
             assertEquals(
                     1,
                     databaseCount,
-                    "Only one payment should exist in PostgreSQL"
+                    "Only one payment should exist for this user and key"
             );
 
             System.out.println("==================================");
@@ -155,17 +177,20 @@ class PaymentConcurrencyIntegrationTest {
                 "refund-concurrency-payment-" + UUID.randomUUID();
 
         Payment payment = paymentService.createPayment(
+                userId,
                 new BigDecimal("1000.00"),
                 "INR",
                 paymentKey
         );
 
         paymentService.updatePaymentStatus(
+                userId,
                 payment.getId(),
                 PaymentStatus.PROCESSING
         );
 
         paymentService.updatePaymentStatus(
+                userId,
                 payment.getId(),
                 PaymentStatus.SUCCESS
         );
@@ -175,6 +200,7 @@ class PaymentConcurrencyIntegrationTest {
                 "refund-concurrency-" + UUID.randomUUID();
 
         Refund refund = refundService.createRefund(
+                userId,
                 payment.getId(),
                 new BigDecimal("500.00"),
                 refundKey
@@ -205,6 +231,7 @@ class PaymentConcurrencyIntegrationTest {
 
                 try {
                     refundService.updateRefundStatus(
+                            userId,
                             payment.getId(),
                             refund.getId(),
                             RefundStatus.PROCESSING
@@ -229,6 +256,7 @@ class PaymentConcurrencyIntegrationTest {
 
                 try {
                     refundService.updateRefundStatus(
+                            userId,
                             payment.getId(),
                             refund.getId(),
                             RefundStatus.FAILED
@@ -285,6 +313,7 @@ class PaymentConcurrencyIntegrationTest {
 
             // 5. Verify every successful transition has one history entry.
             var history = refundService.getRefundStatusHistory(
+                    userId,
                     payment.getId(),
                     refund.getId()
             );

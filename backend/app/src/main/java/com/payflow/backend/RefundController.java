@@ -5,15 +5,15 @@ import com.payflow.backend.dto.CreateRefundRequest;
 import com.payflow.backend.dto.RefundResponse;
 import com.payflow.backend.dto.RefundStatusHistoryResponse;
 import com.payflow.backend.dto.UpdateRefundStatusRequest;
-
 import com.payflow.backend.entity.Refund;
-
 import com.payflow.backend.service.RefundService;
 import com.payflow.backend.validation.IdempotencyKeyValidator;
 
 import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -29,19 +29,20 @@ public class RefundController {
         this.refundService = refundService;
     }
 
-    // Create a new refund.
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public RefundResponse createRefund(
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID paymentId,
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody CreateRefundRequest request
     ) {
-
-        // Validate the idempotency key at the API boundary.
         IdempotencyKeyValidator.validate(idempotencyKey);
 
+        UUID userId = UUID.fromString(jwt.getSubject());
+
         Refund refund = refundService.createRefund(
+                userId,
                 paymentId,
                 request.amount(),
                 idempotencyKey
@@ -50,26 +51,30 @@ public class RefundController {
         return toResponse(refund);
     }
 
-    // Retrieve all refunds for a payment.
     @GetMapping
     public List<RefundResponse> getRefunds(
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID paymentId
     ) {
-        return refundService.getRefunds(paymentId)
+        UUID userId = UUID.fromString(jwt.getSubject());
+
+        return refundService.getRefunds(userId, paymentId)
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
-    // Update refund status.
     @PatchMapping("/{refundId}/status")
     public RefundResponse updateRefundStatus(
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID paymentId,
             @PathVariable UUID refundId,
             @Valid @RequestBody UpdateRefundStatusRequest request
     ) {
+        UUID userId = UUID.fromString(jwt.getSubject());
 
         Refund refund = refundService.updateRefundStatus(
+                userId,
                 paymentId,
                 refundId,
                 request.status()
@@ -78,20 +83,21 @@ public class RefundController {
         return toResponse(refund);
     }
 
-    // Retrieve refund status history.
     @GetMapping("/{refundId}/history")
     public List<RefundStatusHistoryResponse> getRefundStatusHistory(
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID paymentId,
             @PathVariable UUID refundId
     ) {
+        UUID userId = UUID.fromString(jwt.getSubject());
 
         return refundService.getRefundStatusHistory(
+                userId,
                 paymentId,
                 refundId
         );
     }
 
-    // Convert Refund entity into API response DTO.
     private RefundResponse toResponse(Refund refund) {
         return new RefundResponse(
                 refund.getId(),

@@ -4,11 +4,14 @@ package com.payflow.backend.service;
 import com.payflow.backend.entity.Payment;
 import com.payflow.backend.entity.PaymentStatus;
 import com.payflow.backend.entity.PaymentStatusHistory;
+import com.payflow.backend.entity.User;
 import com.payflow.backend.exception.InvalidPaymentStatusTransitionException;
 import com.payflow.backend.exception.PaymentNotFoundException;
 import com.payflow.backend.repository.PaymentRepository;
 import com.payflow.backend.repository.PaymentStatusHistoryRepository;
+import com.payflow.backend.repository.UserRepository;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -32,39 +35,54 @@ class PaymentServiceStatusTest {
     @Mock
     private PaymentStatusHistoryRepository historyRepository;
 
+    @Mock
+    private UserRepository userRepository;
+
     @InjectMocks
     private PaymentService paymentService;
 
+    private final UUID userId = UUID.randomUUID();
+    private final UUID paymentId = UUID.randomUUID();
+
+    private User user;
+
+    @BeforeEach
+    void setUp() {
+        user = new User(
+                "status-test@payflow.com",
+                "password",
+                "USER"
+        );
+    }
+
     private Payment createPayment(PaymentStatus status) {
         return new Payment(
+                user,
                 new BigDecimal("799.99"),
                 "INR",
                 status.name()
         );
     }
 
-    // 1. PENDING -> PROCESSING
+    // TEST 1: PENDING -> PROCESSING
     @Test
     void shouldUpdatePendingToProcessing() {
-
-        UUID paymentId = UUID.randomUUID();
 
         Payment pending = createPayment(PaymentStatus.PENDING);
         Payment processing = createPayment(PaymentStatus.PROCESSING);
 
-        when(paymentRepository.findById(paymentId))
-                .thenReturn(
-                        Optional.of(pending),
-                        Optional.of(processing)
-                );
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
+                .thenReturn(Optional.of(pending), Optional.of(processing));
 
         when(paymentRepository.updateStatusIfCurrent(
                 paymentId,
+                userId,
                 "PENDING",
                 "PROCESSING"
         )).thenReturn(1);
 
         Payment result = paymentService.updatePaymentStatus(
+                userId,
                 paymentId,
                 PaymentStatus.PROCESSING
         );
@@ -73,212 +91,180 @@ class PaymentServiceStatusTest {
 
         verify(paymentRepository).updateStatusIfCurrent(
                 paymentId,
+                userId,
                 "PENDING",
                 "PROCESSING"
         );
 
-        verify(historyRepository).save(
-                any(PaymentStatusHistory.class)
-        );
+        verify(historyRepository).save(any(PaymentStatusHistory.class));
     }
 
-    // 2. PROCESSING -> SUCCESS
+    // TEST 2: PROCESSING -> SUCCESS
     @Test
     void shouldUpdateProcessingToSuccess() {
-
-        UUID paymentId = UUID.randomUUID();
 
         Payment processing = createPayment(PaymentStatus.PROCESSING);
         Payment success = createPayment(PaymentStatus.SUCCESS);
 
-        when(paymentRepository.findById(paymentId))
-                .thenReturn(
-                        Optional.of(processing),
-                        Optional.of(success)
-                );
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
+                .thenReturn(Optional.of(processing), Optional.of(success));
 
         when(paymentRepository.updateStatusIfCurrent(
                 paymentId,
+                userId,
                 "PROCESSING",
                 "SUCCESS"
         )).thenReturn(1);
 
         Payment result = paymentService.updatePaymentStatus(
+                userId,
                 paymentId,
                 PaymentStatus.SUCCESS
         );
 
         assertEquals("SUCCESS", result.getStatus());
 
-        verify(historyRepository).save(
-                any(PaymentStatusHistory.class)
-        );
+        verify(historyRepository).save(any(PaymentStatusHistory.class));
     }
 
-    // 3. PROCESSING -> FAILED
+    // TEST 3: PROCESSING -> FAILED
     @Test
     void shouldUpdateProcessingToFailed() {
-
-        UUID paymentId = UUID.randomUUID();
 
         Payment processing = createPayment(PaymentStatus.PROCESSING);
         Payment failed = createPayment(PaymentStatus.FAILED);
 
-        when(paymentRepository.findById(paymentId))
-                .thenReturn(
-                        Optional.of(processing),
-                        Optional.of(failed)
-                );
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
+                .thenReturn(Optional.of(processing), Optional.of(failed));
 
         when(paymentRepository.updateStatusIfCurrent(
                 paymentId,
+                userId,
                 "PROCESSING",
                 "FAILED"
         )).thenReturn(1);
 
         Payment result = paymentService.updatePaymentStatus(
+                userId,
                 paymentId,
                 PaymentStatus.FAILED
         );
 
         assertEquals("FAILED", result.getStatus());
 
-        verify(historyRepository).save(
-                any(PaymentStatusHistory.class)
-        );
+        verify(historyRepository).save(any(PaymentStatusHistory.class));
     }
 
-    // 4. Reject PENDING -> SUCCESS
+    // TEST 4: Reject PENDING -> SUCCESS
     @Test
     void shouldRejectPendingDirectlyToSuccess() {
 
-        UUID paymentId = UUID.randomUUID();
-
         Payment pending = createPayment(PaymentStatus.PENDING);
 
-        when(paymentRepository.findById(paymentId))
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
                 .thenReturn(Optional.of(pending));
 
         assertThrows(
                 InvalidPaymentStatusTransitionException.class,
                 () -> paymentService.updatePaymentStatus(
+                        userId,
                         paymentId,
                         PaymentStatus.SUCCESS
                 )
         );
 
         verify(paymentRepository, never())
-                .updateStatusIfCurrent(
-                        any(),
-                        anyString(),
-                        anyString()
-                );
+                .updateStatusIfCurrent(any(), any(), anyString(), anyString());
 
         verify(historyRepository, never())
                 .save(any(PaymentStatusHistory.class));
     }
 
-    // 5. Reject SUCCESS -> FAILED
+    // TEST 5: Reject SUCCESS -> FAILED
     @Test
     void shouldRejectSuccessToFailed() {
 
-        UUID paymentId = UUID.randomUUID();
-
         Payment success = createPayment(PaymentStatus.SUCCESS);
 
-        when(paymentRepository.findById(paymentId))
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
                 .thenReturn(Optional.of(success));
 
         assertThrows(
                 InvalidPaymentStatusTransitionException.class,
                 () -> paymentService.updatePaymentStatus(
+                        userId,
                         paymentId,
                         PaymentStatus.FAILED
                 )
         );
 
         verify(paymentRepository, never())
-                .updateStatusIfCurrent(
-                        any(),
-                        anyString(),
-                        anyString()
-                );
+                .updateStatusIfCurrent(any(), any(), anyString(), anyString());
 
         verify(historyRepository, never())
                 .save(any(PaymentStatusHistory.class));
     }
 
-    // 6. Reject FAILED -> SUCCESS
+    // TEST 6: Reject FAILED -> SUCCESS
     @Test
     void shouldRejectFailedToSuccess() {
 
-        UUID paymentId = UUID.randomUUID();
-
         Payment failed = createPayment(PaymentStatus.FAILED);
 
-        when(paymentRepository.findById(paymentId))
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
                 .thenReturn(Optional.of(failed));
 
         assertThrows(
                 InvalidPaymentStatusTransitionException.class,
                 () -> paymentService.updatePaymentStatus(
+                        userId,
                         paymentId,
                         PaymentStatus.SUCCESS
                 )
         );
 
         verify(paymentRepository, never())
-                .updateStatusIfCurrent(
-                        any(),
-                        anyString(),
-                        anyString()
-                );
+                .updateStatusIfCurrent(any(), any(), anyString(), anyString());
 
         verify(historyRepository, never())
                 .save(any(PaymentStatusHistory.class));
     }
 
-    // 7. Payment does not exist
+    // TEST 7: Payment does not exist
     @Test
     void shouldThrowExceptionWhenPaymentDoesNotExist() {
 
-        UUID paymentId = UUID.randomUUID();
-
-        when(paymentRepository.findById(paymentId))
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
                 .thenReturn(Optional.empty());
 
         assertThrows(
                 PaymentNotFoundException.class,
                 () -> paymentService.updatePaymentStatus(
+                        userId,
                         paymentId,
                         PaymentStatus.PROCESSING
                 )
         );
 
         verify(paymentRepository, never())
-                .updateStatusIfCurrent(
-                        any(),
-                        anyString(),
-                        anyString()
-                );
+                .updateStatusIfCurrent(any(), any(), anyString(), anyString());
 
         verify(historyRepository, never())
                 .save(any(PaymentStatusHistory.class));
     }
 
-    // 8. Concurrent status update conflict
+    // TEST 8: Concurrent payment status change
     @Test
     void shouldRejectUpdateWhenPaymentChangesConcurrently() {
 
-        UUID paymentId = UUID.randomUUID();
-
         Payment pending = createPayment(PaymentStatus.PENDING);
 
-        when(paymentRepository.findById(paymentId))
+        when(paymentRepository.findByIdAndUser_Id(paymentId, userId))
                 .thenReturn(Optional.of(pending));
 
         when(paymentRepository.updateStatusIfCurrent(
                 paymentId,
+                userId,
                 "PENDING",
                 "PROCESSING"
         )).thenReturn(0);
@@ -286,6 +272,7 @@ class PaymentServiceStatusTest {
         assertThrows(
                 InvalidPaymentStatusTransitionException.class,
                 () -> paymentService.updatePaymentStatus(
+                        userId,
                         paymentId,
                         PaymentStatus.PROCESSING
                 )
