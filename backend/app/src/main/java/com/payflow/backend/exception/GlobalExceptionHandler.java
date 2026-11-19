@@ -1,8 +1,11 @@
 
 package com.payflow.backend.exception;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -13,30 +16,51 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    // Handle payment not found (404).
-    @ExceptionHandler(PaymentNotFoundException.class)
-    public ResponseEntity<Map<String, Object>> handlePaymentNotFound(
-            PaymentNotFoundException exception
+    private ResponseEntity<Map<String, Object>> buildErrorResponse(
+            HttpStatus status,
+            String message,
+            HttpServletRequest request
     ) {
-
         Map<String, Object> response = Map.of(
                 "timestamp", Instant.now().toString(),
-                "status", 404,
-                "error", "Not Found",
-                "message", exception.getMessage()
+                "status", status.value(),
+                "error", status.getReasonPhrase(),
+                "message", message,
+                "path", request.getRequestURI()
         );
 
-        return ResponseEntity
-                .status(HttpStatus.NOT_FOUND)
-                .body(response);
+        return ResponseEntity.status(status).body(response);
     }
 
-    // Handle request validation errors (400).
+    @ExceptionHandler(PaymentNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handlePaymentNotFound(
+            PaymentNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return buildErrorResponse(
+                HttpStatus.NOT_FOUND,
+                exception.getMessage(),
+                request
+        );
+    }
+
+    @ExceptionHandler(RefundNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleRefundNotFound(
+            RefundNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return buildErrorResponse(
+                HttpStatus.NOT_FOUND,
+                exception.getMessage(),
+                request
+        );
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationErrors(
-            MethodArgumentNotValidException exception
+            MethodArgumentNotValidException exception,
+            HttpServletRequest request
     ) {
-
         String message = exception.getBindingResult()
                 .getFieldErrors()
                 .stream()
@@ -45,69 +69,70 @@ public class GlobalExceptionHandler {
                 .findFirst()
                 .orElse("Invalid request");
 
-        Map<String, Object> response = Map.of(
-                "timestamp", Instant.now().toString(),
-                "status", 400,
-                "error", "Bad Request",
-                "message", message
+        return buildErrorResponse(
+                HttpStatus.BAD_REQUEST,
+                message,
+                request
         );
-
-        return ResponseEntity
-                .status(HttpStatus.BAD_REQUEST)
-                .body(response);
     }
 
-    // Handle idempotency key conflicts (409).
     @ExceptionHandler(IdempotencyConflictException.class)
     public ResponseEntity<Map<String, Object>> handleIdempotencyConflict(
-            IdempotencyConflictException exception
+            IdempotencyConflictException exception,
+            HttpServletRequest request
     ) {
-
-        Map<String, Object> response = Map.of(
-                "timestamp", Instant.now().toString(),
-                "status", 409,
-                "error", "Conflict",
-                "message", exception.getMessage()
+        return buildErrorResponse(
+                HttpStatus.CONFLICT,
+                exception.getMessage(),
+                request
         );
-
-        return ResponseEntity
-                .status(HttpStatus.CONFLICT)
-                .body(response);
     }
 
-    // Handle invalid payment status transitions (409).
     @ExceptionHandler(InvalidPaymentStatusTransitionException.class)
-    public ResponseEntity<Map<String, Object>> handleInvalidPaymentStatusTransition(
-            InvalidPaymentStatusTransitionException exception
+    public ResponseEntity<Map<String, Object>> handleInvalidStatusTransition(
+            InvalidPaymentStatusTransitionException exception,
+            HttpServletRequest request
     ) {
-
-        Map<String, Object> response = Map.of(
-                "timestamp", Instant.now().toString(),
-                "status", 409,
-                "error", "Conflict",
-                "message", exception.getMessage()
+        return buildErrorResponse(
+                HttpStatus.CONFLICT,
+                exception.getMessage(),
+                request
         );
-
-        return ResponseEntity
-                .status(HttpStatus.CONFLICT)
-                .body(response);
     }
 
-    // Handle illegal arguments (400).
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(
-            IllegalArgumentException exception
+            IllegalArgumentException exception,
+            HttpServletRequest request
     ) {
-
-        Map<String, Object> response = Map.of(
-                "timestamp", Instant.now().toString(),
-                "status", 400,
-                "error", "Bad Request",
-                "message", exception.getMessage()
+        return buildErrorResponse(
+                HttpStatus.BAD_REQUEST,
+                exception.getMessage(),
+                request
         );
+    }
 
-        return ResponseEntity
-                .status(HttpStatus.BAD_REQUEST)
-                .body(response);
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleMalformedJson(
+            HttpMessageNotReadableException exception,
+            HttpServletRequest request
+    ) {
+        return buildErrorResponse(
+                HttpStatus.BAD_REQUEST,
+                "Malformed or invalid request body",
+                request
+        );
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, Object>> handleUnexpectedException(
+            Exception exception,
+            HttpServletRequest request
+    ) {
+        return buildErrorResponse(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "An unexpected error occurred",
+                request
+        );
     }
 }
