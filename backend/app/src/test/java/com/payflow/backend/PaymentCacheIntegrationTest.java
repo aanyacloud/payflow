@@ -15,6 +15,7 @@ import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -46,10 +47,13 @@ class PaymentCacheIntegrationTest {
 
         @Bean
         RedisConnectionFactory redisConnectionFactory() {
-            return new LettuceConnectionFactory(
-                    "localhost",
-                    6379
-            );
+
+            LettuceConnectionFactory factory =
+                    new LettuceConnectionFactory("localhost", 6379);
+
+            factory.setDatabase(1);
+
+            return factory;
         }
 
         @Bean
@@ -136,16 +140,33 @@ class PaymentCacheIntegrationTest {
     @Test
     void shouldCachePaymentAfterFirstRequest() {
 
+        System.out.println(
+                "Is PaymentController cached proxy? "
+                        + AopUtils.isAopProxy(paymentController)
+        );
+
         Payment payment = createPayment("PENDING");
 
         when(paymentService.getPaymentById(userId, paymentId))
                 .thenReturn(payment);
 
+        // First request
         var firstResponse = paymentController.getPayment(
                 paymentId,
                 jwt
         );
 
+        // Diagnostic: check whether Redis contains the expected entry.
+        String cacheKey = userId + ":" + paymentId;
+
+        Cache cache = cacheManager.getCache("payments");
+
+        System.out.println(
+                "Cache entry after first request: "
+                        + (cache != null && cache.get(cacheKey) != null)
+        );
+
+        // Second request should be served from cache.
         var secondResponse = paymentController.getPayment(
                 paymentId,
                 jwt

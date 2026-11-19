@@ -3,12 +3,14 @@ spring:
   application:
     name: payflow
 
+  # PostgreSQL Configuration
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/payflow}
     username: ${DB_USERNAME:payflow}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
+  # JPA / Hibernate Configuration
   jpa:
     hibernate:
       ddl-auto: validate
@@ -17,12 +19,14 @@ spring:
       hibernate:
         format_sql: true
 
+  # Flyway Database Migrations
   flyway:
     enabled: true
     baseline-on-migrate: true
     baseline-version: 1
     locations: classpath:db/migration
 
+  # Redis Configuration
   data:
     redis:
       host: localhost
@@ -30,14 +34,38 @@ spring:
       connect-timeout: 2s
       timeout: 2s
 
-server:
-  port: 8080
+  # Apache Kafka Configuration
+  kafka:
+    bootstrap-servers: localhost:9092
 
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+    consumer:
+      group-id: payflow-consumer-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
+server:
+  port: 8081
+
+# Spring Boot Actuator
 management:
   endpoints:
     web:
       exposure:
         include: health,info
 
+
+payflow:
+  outbox:
+    publisher:
+      enabled: true
+      fixed-delay: 5000
+      batch-size: 50         
+
+# JWT Configuration
 jwt:
   secret: ${JWT_SECRET}
