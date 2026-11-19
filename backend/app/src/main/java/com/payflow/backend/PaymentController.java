@@ -10,6 +10,8 @@ import com.payflow.backend.validation.IdempotencyKeyValidator;
 
 import jakarta.validation.Valid;
 
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -52,6 +54,10 @@ public class PaymentController {
     }
 
     @GetMapping("/{id}")
+    @Cacheable(
+            cacheNames = "payments",
+            key = "#jwt.subject + ':' + #id"
+    )
     public PaymentResponse getPayment(
             @PathVariable UUID id,
             @AuthenticationPrincipal Jwt jwt
@@ -80,6 +86,10 @@ public class PaymentController {
     }
 
     @PatchMapping("/{id}/status")
+    @CacheEvict(
+            cacheNames = "payments",
+            key = "#jwt.subject + ':' + #id"
+    )
     public PaymentResponse updatePaymentStatus(
             @PathVariable UUID id,
             @Valid @RequestBody UpdatePaymentStatusRequest request,

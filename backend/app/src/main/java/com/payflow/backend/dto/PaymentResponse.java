@@ -3,6 +3,7 @@ package com.payflow.backend.dto;
 
 import com.payflow.backend.entity.Payment;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -14,7 +15,10 @@ public record PaymentResponse(
         String status,
         Instant createdAt,
         String idempotencyKey
-) {
+) implements Serializable {
+
+    private static final long serialVersionUID = 1L;
+
     public static PaymentResponse from(Payment payment) {
         return new PaymentResponse(
                 payment.getId(),
