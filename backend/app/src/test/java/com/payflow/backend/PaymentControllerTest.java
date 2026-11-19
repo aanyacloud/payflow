@@ -236,4 +236,67 @@ class PaymentControllerTest {
 
         verifyNoInteractions(paymentService);
     }
+
+    // POST TEST 5: Reject missing Idempotency-Key header
+    @Test
+    void shouldRejectMissingIdempotencyKey() throws Exception {
+        setUp();
+
+        mockMvc.perform(post("/api/v1/payments")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                    "amount": 499.99,
+                                    "currency": "INR"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message")
+                        .value("Required header 'Idempotency-Key' is missing"));
+
+        verifyNoInteractions(paymentService);
+    }
+
+    // POST TEST 6: Reject blank Idempotency-Key
+    @Test
+    void shouldRejectBlankIdempotencyKey() throws Exception {
+        setUp();
+
+        mockMvc.perform(post("/api/v1/payments")
+                        .header("Idempotency-Key", "   ")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                    "amount": 499.99,
+                                    "currency": "INR"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+
+        verifyNoInteractions(paymentService);
+    }
+
+    // POST TEST 7: Reject Idempotency-Key longer than 100 characters
+    @Test
+    void shouldRejectOversizedIdempotencyKey() throws Exception {
+        setUp();
+
+        String longKey = "a".repeat(101);
+
+        mockMvc.perform(post("/api/v1/payments")
+                        .header("Idempotency-Key", longKey)
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                    "amount": 499.99,
+                                    "currency": "INR"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+
+        verifyNoInteractions(paymentService);
+    }
 }

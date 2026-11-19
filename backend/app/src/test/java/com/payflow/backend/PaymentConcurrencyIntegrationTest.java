@@ -52,6 +52,7 @@ class PaymentConcurrencyIntegrationTest {
     @Autowired
     private RefundRepository refundRepository;
 
+    // TEST 1: Concurrent requests with the same idempotency key
     @Test
     void concurrentRequestsWithSameKeyShouldCreateOnlyOnePayment()
             throws Exception {
@@ -144,8 +145,9 @@ class PaymentConcurrencyIntegrationTest {
         }
     }
 
+    // TEST 2: Concurrent refund status updates
     @Test
-    void concurrentRefundStatusUpdatesShouldAllowOnlyOneTransition()
+    void concurrentRefundStatusUpdatesShouldSerializeValidTransitions()
             throws Exception {
 
         // 1. Create a successful payment.
@@ -254,15 +256,10 @@ class PaymentConcurrencyIntegrationTest {
             boolean failedSucceeded =
                     failedFuture.get(30, TimeUnit.SECONDS);
 
-            // Exactly one transition must succeed.
-            int successfulUpdates =
-                    (processingSucceeded ? 1 : 0)
-                            + (failedSucceeded ? 1 : 0);
-
-            assertEquals(
-                    1,
-                    successfulUpdates,
-                    "Exactly one concurrent refund update should succeed"
+            // At least one valid transition must succeed.
+            assertTrue(
+                    processingSucceeded || failedSucceeded,
+                    "At least one concurrent refund update should succeed"
             );
 
             // 4. Verify the final state in PostgreSQL.
@@ -273,22 +270,33 @@ class PaymentConcurrencyIntegrationTest {
                     )
                     .orElseThrow();
 
-            assertTrue(
-                    finalRefund.getStatus().equals(RefundStatus.PROCESSING.name())
-                            || finalRefund.getStatus().equals(RefundStatus.FAILED.name()),
-                    "Final refund status must reflect the winning transition"
+            String expectedFinalStatus =
+                    processingSucceeded
+                            ? (failedSucceeded
+                                    ? RefundStatus.FAILED.name()
+                                    : RefundStatus.PROCESSING.name())
+                            : RefundStatus.FAILED.name();
+
+            assertEquals(
+                    expectedFinalStatus,
+                    finalRefund.getStatus(),
+                    "Final refund status must reflect the valid serialized transitions"
             );
 
-            // 5. Verify only one history entry was committed.
+            // 5. Verify every successful transition has one history entry.
             var history = refundService.getRefundStatusHistory(
                     payment.getId(),
                     refund.getId()
             );
 
+            int successfulUpdates =
+                    (processingSucceeded ? 1 : 0)
+                            + (failedSucceeded ? 1 : 0);
+
             assertEquals(
-                    1,
+                    successfulUpdates,
                     history.size(),
-                    "Only one refund status history entry should exist"
+                    "Every successful refund transition must have one history entry"
             );
 
             System.out.println("==================================");

@@ -7,7 +7,9 @@ import com.payflow.backend.dto.RefundStatusHistoryResponse;
 import com.payflow.backend.dto.UpdateRefundStatusRequest;
 
 import com.payflow.backend.entity.Refund;
+
 import com.payflow.backend.service.RefundService;
+import com.payflow.backend.validation.IdempotencyKeyValidator;
 
 import jakarta.validation.Valid;
 
@@ -27,6 +29,7 @@ public class RefundController {
         this.refundService = refundService;
     }
 
+    // Create a new refund.
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public RefundResponse createRefund(
@@ -34,6 +37,10 @@ public class RefundController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody CreateRefundRequest request
     ) {
+
+        // Validate the idempotency key at the API boundary.
+        IdempotencyKeyValidator.validate(idempotencyKey);
+
         Refund refund = refundService.createRefund(
                 paymentId,
                 request.amount(),
@@ -43,6 +50,7 @@ public class RefundController {
         return toResponse(refund);
     }
 
+    // Retrieve all refunds for a payment.
     @GetMapping
     public List<RefundResponse> getRefunds(
             @PathVariable UUID paymentId
@@ -53,12 +61,14 @@ public class RefundController {
                 .toList();
     }
 
+    // Update refund status.
     @PatchMapping("/{refundId}/status")
     public RefundResponse updateRefundStatus(
             @PathVariable UUID paymentId,
             @PathVariable UUID refundId,
             @Valid @RequestBody UpdateRefundStatusRequest request
     ) {
+
         Refund refund = refundService.updateRefundStatus(
                 paymentId,
                 refundId,
@@ -68,17 +78,20 @@ public class RefundController {
         return toResponse(refund);
     }
 
+    // Retrieve refund status history.
     @GetMapping("/{refundId}/history")
     public List<RefundStatusHistoryResponse> getRefundStatusHistory(
             @PathVariable UUID paymentId,
             @PathVariable UUID refundId
     ) {
+
         return refundService.getRefundStatusHistory(
                 paymentId,
                 refundId
         );
     }
 
+    // Convert Refund entity into API response DTO.
     private RefundResponse toResponse(Refund refund) {
         return new RefundResponse(
                 refund.getId(),

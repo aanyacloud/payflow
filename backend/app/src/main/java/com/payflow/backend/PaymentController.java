@@ -4,9 +4,11 @@ package com.payflow.backend;
 import com.payflow.backend.dto.CreatePaymentRequest;
 import com.payflow.backend.dto.UpdatePaymentStatusRequest;
 import com.payflow.backend.dto.PaymentStatusHistoryResponse;
+
 import com.payflow.backend.entity.Payment;
-import com.payflow.backend.entity.PaymentStatus;
+
 import com.payflow.backend.service.PaymentService;
+import com.payflow.backend.validation.IdempotencyKeyValidator;
 
 import jakarta.validation.Valid;
 
@@ -30,12 +32,16 @@ public class PaymentController {
         this.paymentService = paymentService;
     }
 
+    // Create a new payment.
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Payment createPayment(
             @Valid @RequestBody CreatePaymentRequest request,
             @RequestHeader("Idempotency-Key") String idempotencyKey
     ) {
+
+        // Validate the idempotency key at the API boundary.
+        IdempotencyKeyValidator.validate(idempotencyKey);
 
         return paymentService.createPayment(
                 request.amount(),
@@ -44,11 +50,15 @@ public class PaymentController {
         );
     }
 
+    // Retrieve a payment by ID.
     @GetMapping("/{id}")
-    public Payment getPayment(@PathVariable UUID id) {
+    public Payment getPayment(
+            @PathVariable UUID id
+    ) {
         return paymentService.getPaymentById(id);
     }
 
+    // Retrieve payments with pagination.
     @GetMapping
     public Page<Payment> getPayments(
             @PageableDefault(
@@ -60,6 +70,7 @@ public class PaymentController {
         return paymentService.getPayments(pageable);
     }
 
+    // Update payment status.
     @PatchMapping("/{id}/status")
     public Payment updatePaymentStatus(
             @PathVariable UUID id,
