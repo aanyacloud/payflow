@@ -7,6 +7,7 @@ import com.payflow.backend.entity.Refund;
 import com.payflow.backend.entity.RefundStatus;
 import com.payflow.backend.entity.User;
 import com.payflow.backend.exception.InvalidPaymentStatusTransitionException;
+import com.payflow.backend.exception.PaymentNotFoundException;
 import com.payflow.backend.repository.PaymentRepository;
 import com.payflow.backend.repository.RefundRepository;
 import com.payflow.backend.repository.UserRepository;
@@ -341,5 +342,107 @@ class PaymentConcurrencyIntegrationTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    // TEST 3: User A cannot retrieve User B's payment
+    @Test
+    void userCannotRetrieveAnotherUsersPayment() {
+
+        User anotherUser = createAnotherUser();
+
+        Payment payment = paymentService.createPayment(
+                userId,
+                new BigDecimal("500.00"),
+                "INR",
+                "ownership-retrieve-" + UUID.randomUUID()
+        );
+
+        assertThrows(
+                PaymentNotFoundException.class,
+                () -> paymentService.getPaymentById(
+                        anotherUser.getId(),
+                        payment.getId()
+                )
+        );
+    }
+
+    // TEST 4: User A cannot update User B's payment
+    @Test
+    void userCannotUpdateAnotherUsersPayment() {
+
+        User anotherUser = createAnotherUser();
+
+        Payment payment = paymentService.createPayment(
+                userId,
+                new BigDecimal("500.00"),
+                "INR",
+                "ownership-update-" + UUID.randomUUID()
+        );
+
+        assertThrows(
+                PaymentNotFoundException.class,
+                () -> paymentService.updatePaymentStatus(
+                        anotherUser.getId(),
+                        payment.getId(),
+                        PaymentStatus.PROCESSING
+                )
+        );
+
+        Payment unchangedPayment = paymentService.getPaymentById(
+                userId,
+                payment.getId()
+        );
+
+        assertEquals(
+                "PENDING",
+                unchangedPayment.getStatus()
+        );
+    }
+
+    // TEST 5: User A cannot create a refund against User B's payment
+    @Test
+    void userCannotCreateRefundForAnotherUsersPayment() {
+
+        User anotherUser = createAnotherUser();
+
+        Payment payment = paymentService.createPayment(
+                userId,
+                new BigDecimal("1000.00"),
+                "INR",
+                "ownership-refund-payment-" + UUID.randomUUID()
+        );
+
+        paymentService.updatePaymentStatus(
+                userId,
+                payment.getId(),
+                PaymentStatus.PROCESSING
+        );
+
+        paymentService.updatePaymentStatus(
+                userId,
+                payment.getId(),
+                PaymentStatus.SUCCESS
+        );
+
+        assertThrows(
+                PaymentNotFoundException.class,
+                () -> refundService.createRefund(
+                        anotherUser.getId(),
+                        payment.getId(),
+                        new BigDecimal("200.00"),
+                        "ownership-refund-" + UUID.randomUUID()
+                )
+        );
+    }
+
+    private User createAnotherUser() {
+
+        User anotherUser = new User(
+                "another-user-" + UUID.randomUUID() + "@payflow.com",
+                "test-password",
+                "USER"
+        );
+
+        return userRepository.save(anotherUser);
     }
 }

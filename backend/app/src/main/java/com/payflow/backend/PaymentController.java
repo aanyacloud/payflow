@@ -2,9 +2,9 @@
 package com.payflow.backend;
 
 import com.payflow.backend.dto.CreatePaymentRequest;
+import com.payflow.backend.dto.PaymentResponse;
 import com.payflow.backend.dto.UpdatePaymentStatusRequest;
 import com.payflow.backend.dto.PaymentStatusHistoryResponse;
-import com.payflow.backend.entity.Payment;
 import com.payflow.backend.service.PaymentService;
 import com.payflow.backend.validation.IdempotencyKeyValidator;
 
@@ -34,34 +34,38 @@ public class PaymentController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Payment createPayment(
+    public PaymentResponse createPayment(
             @Valid @RequestBody CreatePaymentRequest request,
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @AuthenticationPrincipal Jwt jwt
     ) {
         IdempotencyKeyValidator.validate(idempotencyKey);
 
-        return paymentService.createPayment(
-                UUID.fromString(jwt.getSubject()),
-                request.amount(),
-                request.currency(),
-                idempotencyKey
+        return PaymentResponse.from(
+                paymentService.createPayment(
+                        UUID.fromString(jwt.getSubject()),
+                        request.amount(),
+                        request.currency(),
+                        idempotencyKey
+                )
         );
     }
 
     @GetMapping("/{id}")
-    public Payment getPayment(
+    public PaymentResponse getPayment(
             @PathVariable UUID id,
             @AuthenticationPrincipal Jwt jwt
     ) {
-        return paymentService.getPaymentById(
-                UUID.fromString(jwt.getSubject()),
-                id
+        return PaymentResponse.from(
+                paymentService.getPaymentById(
+                        UUID.fromString(jwt.getSubject()),
+                        id
+                )
         );
     }
 
     @GetMapping
-    public Page<Payment> getPayments(
+    public Page<PaymentResponse> getPayments(
             @PageableDefault(
                     size = 10,
                     sort = "createdAt",
@@ -72,19 +76,21 @@ public class PaymentController {
         return paymentService.getPayments(
                 UUID.fromString(jwt.getSubject()),
                 pageable
-        );
+        ).map(PaymentResponse::from);
     }
 
     @PatchMapping("/{id}/status")
-    public Payment updatePaymentStatus(
+    public PaymentResponse updatePaymentStatus(
             @PathVariable UUID id,
             @Valid @RequestBody UpdatePaymentStatusRequest request,
             @AuthenticationPrincipal Jwt jwt
     ) {
-        return paymentService.updatePaymentStatus(
-                UUID.fromString(jwt.getSubject()),
-                id,
-                request.status()
+        return PaymentResponse.from(
+                paymentService.updatePaymentStatus(
+                        UUID.fromString(jwt.getSubject()),
+                        id,
+                        request.status()
+                )
         );
     }
 
