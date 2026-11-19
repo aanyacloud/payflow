@@ -3,7 +3,11 @@ package com.payflow.backend.repository;
 
 import com.payflow.backend.entity.Refund;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -14,19 +18,44 @@ import java.util.UUID;
 
 public interface RefundRepository extends JpaRepository<Refund, UUID> {
 
-    // Find refund using its idempotency key.
     Optional<Refund> findByIdempotencyKey(String idempotencyKey);
 
-    // Find a refund belonging to a specific payment.
     Optional<Refund> findByIdAndPayment_Id(
             UUID refundId,
             UUID paymentId
     );
 
-    // Retrieve all refunds for a payment.
+    // Pessimistic lock for an individual refund.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT r FROM Refund r
+            WHERE r.id = :refundId
+            AND r.payment.id = :paymentId
+            """)
+    Optional<Refund> findByIdAndPayment_IdForUpdate(
+            @Param("refundId") UUID refundId,
+            @Param("paymentId") UUID paymentId
+    );
+
+    // Atomic compare-and-set status update.
+    // Updates only if the refund still has the expected status.
+    @Modifying(flushAutomatically = true)
+    @Query("""
+            UPDATE Refund r
+            SET r.status = :newStatus
+            WHERE r.id = :refundId
+            AND r.payment.id = :paymentId
+            AND r.status = :expectedStatus
+            """)
+    int updateStatusIfCurrent(
+            @Param("refundId") UUID refundId,
+            @Param("paymentId") UUID paymentId,
+            @Param("expectedStatus") String expectedStatus,
+            @Param("newStatus") String newStatus
+    );
+
     List<Refund> findAllByPayment_IdOrderByCreatedAtAsc(UUID paymentId);
 
-    // Calculate the total amount reserved for refunds.
     @Query("""
             SELECT COALESCE(SUM(r.amount), 0)
             FROM Refund r

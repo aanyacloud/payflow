@@ -346,12 +346,26 @@ class RefundServiceTest {
     @Test
     void updateRefundStatusSuccessfullyRecordsHistory() {
 
-        when(refundRepository.findByIdAndPayment_Id(refundId, paymentId))
-                .thenReturn(Optional.of(refund));
+        when(paymentRepository.findByIdForUpdate(paymentId))
+                .thenReturn(Optional.of(payment));
+
+        when(refundRepository.findByIdAndPayment_IdForUpdate(
+                refundId,
+                paymentId
+        )).thenReturn(Optional.of(refund));
 
         when(refund.getStatus()).thenReturn("PENDING");
 
-        when(refundRepository.save(refund)).thenReturn(refund);
+        // Atomic conditional update succeeds.
+        when(refundRepository.updateStatusIfCurrent(
+                refundId,
+                paymentId,
+                "PENDING",
+                "PROCESSING"
+        )).thenReturn(1);
+
+        when(refundRepository.save(refund))
+                .thenReturn(refund);
 
         Refund result = refundService.updateRefundStatus(
                 paymentId,
@@ -360,6 +374,18 @@ class RefundServiceTest {
         );
 
         assertSame(refund, result);
+
+        verify(paymentRepository).findByIdForUpdate(paymentId);
+
+        verify(refundRepository)
+                .findByIdAndPayment_IdForUpdate(refundId, paymentId);
+
+        verify(refundRepository).updateStatusIfCurrent(
+                refundId,
+                paymentId,
+                "PENDING",
+                "PROCESSING"
+        );
 
         verify(refund).setStatus("PROCESSING");
 
@@ -384,8 +410,13 @@ class RefundServiceTest {
     @Test
     void updateRefundStatusRejectsInvalidTransition() {
 
-        when(refundRepository.findByIdAndPayment_Id(refundId, paymentId))
-                .thenReturn(Optional.of(refund));
+        when(paymentRepository.findByIdForUpdate(paymentId))
+                .thenReturn(Optional.of(payment));
+
+        when(refundRepository.findByIdAndPayment_IdForUpdate(
+                refundId,
+                paymentId
+        )).thenReturn(Optional.of(refund));
 
         when(refund.getStatus()).thenReturn("SUCCESS");
 
@@ -398,6 +429,9 @@ class RefundServiceTest {
                 )
         );
 
+        verify(refundRepository, never())
+                .updateStatusIfCurrent(any(), any(), any(), any());
+
         verify(historyRepository, never()).save(any());
         verify(refundRepository, never()).save(any());
         verify(refund, never()).setStatus(any());
@@ -406,8 +440,13 @@ class RefundServiceTest {
     @Test
     void updateRefundStatusRejectsMissingRefund() {
 
-        when(refundRepository.findByIdAndPayment_Id(refundId, paymentId))
-                .thenReturn(Optional.empty());
+        when(paymentRepository.findByIdForUpdate(paymentId))
+                .thenReturn(Optional.of(payment));
+
+        when(refundRepository.findByIdAndPayment_IdForUpdate(
+                refundId,
+                paymentId
+        )).thenReturn(Optional.empty());
 
         assertThrows(
                 RefundNotFoundException.class,
@@ -418,7 +457,76 @@ class RefundServiceTest {
                 )
         );
 
+        verify(refundRepository, never())
+                .updateStatusIfCurrent(any(), any(), any(), any());
+
         verify(historyRepository, never()).save(any());
+        verify(refundRepository, never()).save(any());
+    }
+
+    @Test
+    void updateRefundStatusRejectsMissingPayment() {
+
+        when(paymentRepository.findByIdForUpdate(paymentId))
+                .thenReturn(Optional.empty());
+
+        assertThrows(
+                PaymentNotFoundException.class,
+                () -> refundService.updateRefundStatus(
+                        paymentId,
+                        refundId,
+                        RefundStatus.PROCESSING
+                )
+        );
+
+        verify(refundRepository, never())
+                .findByIdAndPayment_IdForUpdate(any(), any());
+
+        verify(refundRepository, never())
+                .updateStatusIfCurrent(any(), any(), any(), any());
+
+        verify(historyRepository, never()).save(any());
+    }
+
+    @Test
+    void updateRefundStatusRejectsConcurrentChange() {
+
+        when(paymentRepository.findByIdForUpdate(paymentId))
+                .thenReturn(Optional.of(payment));
+
+        when(refundRepository.findByIdAndPayment_IdForUpdate(
+                refundId,
+                paymentId
+        )).thenReturn(Optional.of(refund));
+
+        when(refund.getStatus()).thenReturn("PENDING");
+
+        // Zero rows updated means another transaction changed the status.
+        when(refundRepository.updateStatusIfCurrent(
+                refundId,
+                paymentId,
+                "PENDING",
+                "PROCESSING"
+        )).thenReturn(0);
+
+        assertThrows(
+                InvalidPaymentStatusTransitionException.class,
+                () -> refundService.updateRefundStatus(
+                        paymentId,
+                        refundId,
+                        RefundStatus.PROCESSING
+                )
+        );
+
+        verify(refundRepository).updateStatusIfCurrent(
+                refundId,
+                paymentId,
+                "PENDING",
+                "PROCESSING"
+        );
+
+        verify(historyRepository, never()).save(any());
+        verify(refundRepository, never()).save(any());
     }
 
     // --------------------------------------------------

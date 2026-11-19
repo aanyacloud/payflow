@@ -47,6 +47,7 @@ public class RefundService {
             BigDecimal amount,
             String idempotencyKey
     ) {
+
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException(
                     "Refund amount must be greater than zero"
@@ -56,6 +57,7 @@ public class RefundService {
         if (idempotencyKey == null
                 || idempotencyKey.isBlank()
                 || idempotencyKey.length() > 100) {
+
             throw new IllegalArgumentException(
                     "Idempotency key must contain 1 to 100 characters"
             );
@@ -65,6 +67,7 @@ public class RefundService {
                 refundRepository.findByIdempotencyKey(idempotencyKey);
 
         if (existingRefund.isPresent()) {
+
             Refund refund = existingRefund.get();
 
             boolean samePayment =
@@ -82,6 +85,7 @@ public class RefundService {
             return refund;
         }
 
+        // Lock the parent payment to serialize refund operations.
         Payment payment = paymentRepository
                 .findByIdForUpdate(paymentId)
                 .orElseThrow(() -> new PaymentNotFoundException(
@@ -139,12 +143,21 @@ public class RefundService {
             UUID refundId,
             RefundStatus requestedStatus
     ) {
+
+        // Step 1: Lock the parent payment.
+        paymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new PaymentNotFoundException(
+                        "Payment not found: " + paymentId
+                ));
+
+        // Step 2: Lock and retrieve the refund.
         Refund refund = refundRepository
-                .findByIdAndPayment_Id(refundId, paymentId)
+                .findByIdAndPayment_IdForUpdate(refundId, paymentId)
                 .orElseThrow(() -> new RefundNotFoundException(
                         "Refund not found: " + refundId
                 ));
 
+        // Step 3: Read and validate the current status.
         RefundStatus currentStatus =
                 RefundStatus.valueOf(refund.getStatus());
 
@@ -155,8 +168,25 @@ public class RefundService {
             );
         }
 
+        // Step 4: Perform an atomic conditional database update.
+        int updated = refundRepository.updateStatusIfCurrent(
+                refundId,
+                paymentId,
+                currentStatus.name(),
+                requestedStatus.name()
+        );
+
+        // Zero updated rows means the expected state no longer matches.
+        if (updated == 0) {
+            throw new InvalidPaymentStatusTransitionException(
+                    "Refund status changed concurrently. Please retry."
+            );
+        }
+
+        // Step 5: Synchronize the managed entity.
         refund.setStatus(requestedStatus.name());
 
+        // Step 6: Record history in the same transaction.
         historyRepository.save(
                 new RefundStatusHistory(
                         refund,
@@ -173,6 +203,7 @@ public class RefundService {
             UUID paymentId,
             UUID refundId
     ) {
+
         refundRepository.findByIdAndPayment_Id(refundId, paymentId)
                 .orElseThrow(() -> new RefundNotFoundException(
                         "Refund not found: " + refundId
